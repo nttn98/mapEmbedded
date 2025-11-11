@@ -6,6 +6,7 @@ import {
   villagesGeoJson,
   fakeFetchVillageStatsByName,
 } from "../services/fakeVillageApi";
+import CenterModal from "../components/CenterModal";
 
 // ================== CONFIG MAP ==================
 const DEFAULT_CENTER = [98.8, 16.8]; // giữa vùng village
@@ -21,7 +22,7 @@ const addVillageLayers = (map) => {
 
   // 1) Image pulsing-dot (animation luôn chạy)
   if (!map.hasImage("pulsing-dot-small")) {
-    const size = 150;
+    const size = 300;
     const pulsingDot = {
       width: size,
       height: size,
@@ -33,7 +34,7 @@ const addVillageLayers = (map) => {
         this.context = canvas.getContext("2d");
       },
       render() {
-        const duration = 2000;
+        const duration = 5000;
         const t = (performance.now() % duration) / duration;
 
         const radius = (size / 2) * 0.25;
@@ -42,13 +43,13 @@ const addVillageLayers = (map) => {
 
         ctx.clearRect(0, 0, this.width, this.height);
 
-        // outer
+        // outer pulse
         ctx.beginPath();
         ctx.arc(this.width / 2, this.height / 2, outerRadius, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(255, 0, 0, ${1 - t})`;
         ctx.fill();
 
-        // inner
+        // inner dot
         ctx.beginPath();
         ctx.arc(this.width / 2, this.height / 2, radius, 0, Math.PI * 2);
         ctx.fillStyle = "rgba(255, 0, 0, 1)";
@@ -85,11 +86,17 @@ const addVillageLayers = (map) => {
         "icon-image": "pulsing-dot-small",
         "icon-size": 0.6,
         "icon-anchor": "center",
+        // show all icons even when crowded
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+
         "text-field": ["to-string", ["get", "count"]],
         "text-size": 11,
         "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
         "text-offset": [0, 0],
         "text-anchor": "center",
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
       },
       paint: {
         "text-color": "#ffffff",
@@ -111,6 +118,7 @@ const addVillageLayers = (map) => {
         "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
         "text-anchor": "top",
         "text-offset": [0, 1.4],
+        // keep names readable but allow overlap when crowded
         "text-allow-overlap": false,
       },
       paint: {
@@ -122,6 +130,7 @@ const addVillageLayers = (map) => {
   }
 };
 
+// ======================= Modal React (centered) =======================
 // ======================= COMPONENT =======================
 const MapEmbedded = ({ onSelectVillage = () => {} }) => {
   const [style, setStyle] = useState("light");
@@ -135,8 +144,12 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const maplibreRef = useRef(null);
-  const popupRef = useRef(null);
   const searchGeoJsonRef = useRef(null); // geojson highlight
+
+  // modal state (React)
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalTitle, setModalTitle] = useState("");
+  const [modalStats, setModalStats] = useState(null);
 
   // helper: add / update layer highlight kết quả search
   const addOrUpdateSearchLayer = (map, geojson) => {
@@ -164,7 +177,7 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
               source: "search-result",
               paint: {
                 "fill-color": "#0078ff",
-                "fill-opacity": 0.2,
+                "fill-opacity": 0.18,
               },
             },
             "village-symbol"
@@ -194,7 +207,7 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
               type: "circle",
               source: "search-result",
               paint: {
-                "circle-radius": 6,
+                "circle-radius": 7,
                 "circle-color": "#0078ff",
                 "circle-stroke-color": "#ffffff",
                 "circle-stroke-width": 2,
@@ -236,15 +249,14 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
     const map = mapRef.current;
     if (!map) return;
 
-    if (popupRef.current) {
-      popupRef.current.remove();
-      popupRef.current = null;
-    }
-
     clearSearchLayer();
     setSearchText("");
     setSuggestions([]);
     setSearchError("");
+
+    // close modal if any
+    setModalVisible(false);
+    setModalStats(null);
 
     map.easeTo({
       center: DEFAULT_CENTER,
@@ -393,7 +405,7 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
           });
         });
 
-        // CLICK VILLAGE -> chỉ lúc này mới gọi fake API + popup
+        // CLICK VILLAGE -> gọi fake API + show modal
         const onClickVillage = async (e) => {
           const feature = e.features && e.features[0];
           if (!feature) return;
@@ -413,41 +425,10 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
           const apiData = await fakeFetchVillageStatsByName(name);
           onSelectVillage(name, apiData);
 
-          // POPUP DETAIL
-          if (!popupRef.current) {
-            const { default: _defaultMaybe } = maplibreRef.current;
-            const lib =
-              typeof _defaultMaybe === "function"
-                ? _defaultMaybe
-                : maplibreRef.current;
-            const PopupClass = lib.Popup || lib; // fallback
-            popupRef.current = new PopupClass({ closeButton: true });
-          }
-
-          let html = `<b>${name}</b>`;
-          if (apiData?.detail) {
-            const d = apiData.detail;
-            const yearLines = d.years
-              .map(
-                (x) =>
-                  `<div>Year: <b>${x.year}</b> = <span style="color:red;">${x.case_sum}</span></div>`
-              )
-              .join("");
-
-            html = `
-              <div style="font-family: sans-serif; font-size: 12px;">
-                <div><b>Village: ${d.village_name}</b></div>
-                <div style="margin-top:4px;">
-                  Detail | <b>${d.from_date}</b> -> <b>${d.to_date}</b>
-                </div>
-                <div style="margin-top:8px;">
-                  ${yearLines}
-                </div>
-              </div>
-            `;
-          }
-
-          popupRef.current.setLngLat(lngLat).setHTML(html).addTo(map);
+          // show React modal (centered, 1/3 screen)
+          setModalTitle(name);
+          setModalStats(apiData || null);
+          setModalVisible(true);
         };
 
         clickableLayers.forEach((layerId) => {
@@ -471,10 +452,6 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
 
     return () => {
       canceled = true;
-      if (popupRef.current) {
-        popupRef.current.remove();
-        popupRef.current = null;
-      }
       if (mapRef.current) {
         mapRef.current.remove();
       }
@@ -489,7 +466,7 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
     map.setStyle(mapStyles[style]);
   }, [style]);
 
-  // render danh sách gợi ý dưới ô search
+  // render danh sách gợi ý (top-right)
   const renderSuggestions = () => {
     if (!suggestions.length) return null;
 
@@ -497,15 +474,15 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
       <div
         style={{
           position: "absolute",
-          top: 62,
-          left: 10,
+          top: 52,
+          right: 10,
           background: "#fff",
           borderRadius: 8,
-          boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
-          zIndex: 20,
-          maxHeight: 260,
+          boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
+          zIndex: 1200,
+          maxHeight: 300,
           overflowY: "auto",
-          minWidth: 260,
+          minWidth: 300,
         }}
       >
         {suggestions.map((f, idx) => {
@@ -520,23 +497,23 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
               onClick={() => handleSelectSuggestion(f)}
               style={{
                 display: "flex",
-                gap: 8,
-                padding: "8px 10px",
+                gap: 10,
+                padding: "10px 12px",
                 cursor: "pointer",
                 borderBottom:
-                  idx === suggestions.length - 1 ? "none" : "1px solid #eee",
+                  idx === suggestions.length - 1 ? "none" : "1px solid #f0f3f6",
               }}
             >
               <div style={{ fontSize: 18, lineHeight: "24px" }}>📍</div>
-              <div style={{ fontSize: 12 }}>
-                <div style={{ fontWeight: 600 }}>{primary}</div>
+              <div style={{ fontSize: 13 }}>
+                <div style={{ fontWeight: 700 }}>{primary}</div>
                 {secondary && (
                   <div
                     style={{
-                      marginTop: 2,
-                      color: "#555",
-                      fontSize: 11,
-                      maxWidth: 210,
+                      marginTop: 4,
+                      color: "#6b7785",
+                      fontSize: 12,
+                      maxWidth: 240,
                       whiteSpace: "nowrap",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -554,29 +531,38 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
   };
 
   return (
-    <div style={{ width: "100%", height: "100vh", position: "relative" }}>
-      {/* Search + control panel */}
+    <div
+      style={{
+        width: "100%",
+        height: "100vh",
+        position: "relative",
+        fontFamily: "Inter, Arial, sans-serif",
+      }}
+    >
+      {/* Search (moved to top-right) */}
       <div
         style={{
           position: "absolute",
           left: 10,
           top: 10,
-          zIndex: 20,
+          zIndex: 1200,
           display: "flex",
           flexDirection: "column",
           gap: 8,
+          alignItems: "flex-end",
         }}
       >
-        {/* ô search giống screenshot */}
         <div
           style={{
             background: "#fff",
-            padding: "4px 8px",
+            padding: "6px 10px",
             borderRadius: 999,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+            boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
             display: "flex",
             alignItems: "center",
-            minWidth: 260,
+            minWidth: 300,
+            maxWidth: 420,
+            gap: 8,
           }}
         >
           <span style={{ marginRight: 6 }}>🔍</span>
@@ -589,11 +575,11 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
               border: "none",
               outline: "none",
               flex: 1,
-              fontSize: 12,
+              fontSize: 13,
             }}
           />
           {isSearching && (
-            <span style={{ fontSize: 11, color: "#999", marginRight: 4 }}>
+            <span style={{ fontSize: 12, color: "#999", marginRight: 4 }}>
               ...
             </span>
           )}
@@ -622,48 +608,94 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
           <div
             style={{
               background: "#fff",
-              padding: "4px 8px",
-              borderRadius: 6,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
-              fontSize: 11,
+              padding: "6px 10px",
+              borderRadius: 8,
+              boxShadow: "0 6px 20px rgba(0,0,0,0.08)",
+              fontSize: 12,
               color: "red",
-              maxWidth: 260,
+              maxWidth: 360,
             }}
           >
             {searchError}
           </div>
         )}
-
-        {/* panel điều khiển */}
-        <div
-          style={{
-            background: "#fff",
-            padding: 10,
-            borderRadius: 8,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
-            minWidth: 180,
-          }}
-        >
-          <h4 style={{ marginBottom: 8 }}>Village Map</h4>
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              flexWrap: "wrap",
-              marginBottom: 8,
-            }}
-          >
-            <button onClick={() => setStyle("light")}>Light</button>
-          </div>
-          <button onClick={handleResetView}>Reset view</button>
-        </div>
       </div>
 
       {/* suggestion dropdown */}
       {renderSuggestions()}
 
+      {/* panel điều khiển ở bottom-left (gọn) */}
+      {/* compact control - bottom-left */}
+      <div
+        style={{
+          position: "absolute",
+          left: 10,
+          bottom: 10,
+          zIndex: 1200,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            alignItems: "center",
+            background: "#fff",
+            padding: "6px",
+            borderRadius: 9,
+            boxShadow: "0 8px 22px rgba(0,0,0,0.10)",
+            minWidth: 110,
+          }}
+        >
+          {/* small title (optional) */}
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#222" }}>
+            Map
+          </div>
+
+          {/* actions */}
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              onClick={() => setStyle("light")}
+              style={{
+                padding: "6px 8px",
+                fontSize: 12,
+                borderRadius: 6,
+                border: "1px solid #eef2f6",
+                background: "#f8fbff",
+                cursor: "pointer",
+              }}
+              aria-label="Light style"
+            >
+              Light
+            </button>
+
+            <button
+              onClick={handleResetView}
+              style={{
+                padding: "6px 8px",
+                fontSize: 12,
+                borderRadius: 6,
+                border: "1px solid #eef2f6",
+                background: "#fff",
+                cursor: "pointer",
+              }}
+              aria-label="Reset view"
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Map container */}
       <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
+
+      {/* Modal (React) */}
+      <CenterModal
+        visible={modalVisible}
+        onClose={() => setModalVisible(false)}
+        title={modalTitle}
+        stats={modalStats}
+      />
     </div>
   );
 };
