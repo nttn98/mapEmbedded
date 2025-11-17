@@ -28,7 +28,7 @@ export const fakeVillageStatsByName = {
     years: [
       { year: 2023, case_sum: 2 },
       { year: 2024, case_sum: 3 },
-      { year: 2025, case_sum: 1 },
+      { year: 2025, case_sum: 10 },
     ],
   },
   ห้วยฟูแกง: {
@@ -41,7 +41,7 @@ export const fakeVillageStatsByName = {
     years: [
       { year: 2023, case_sum: 1 },
       { year: 2024, case_sum: 4 },
-      { year: 2025, case_sum: 2 },
+      { year: 2025, case_sum: 20 },
     ],
   },
   หนองหลวง: {
@@ -54,7 +54,7 @@ export const fakeVillageStatsByName = {
     years: [
       { year: 2023, case_sum: 3 },
       { year: 2024, case_sum: 8 },
-      { year: 2025, case_sum: 3 },
+      { year: 2025, case_sum: 30 },
     ],
   },
   บ้านหัวดอย: {
@@ -67,7 +67,7 @@ export const fakeVillageStatsByName = {
     years: [
       { year: 2023, case_sum: 1 },
       { year: 2024, case_sum: 2 },
-      { year: 2025, case_sum: 1 },
+      { year: 2025, case_sum: 10 },
     ],
   },
   ผาลัด: {
@@ -80,7 +80,7 @@ export const fakeVillageStatsByName = {
     years: [
       { year: 2023, case_sum: 5 },
       { year: 2024, case_sum: 7 },
-      { year: 2025, case_sum: 4 },
+      { year: 2025, case_sum: 40 },
     ],
   },
   เวียงต้า: {
@@ -106,7 +106,7 @@ export const fakeVillageStatsByName = {
     years: [
       { year: 2023, case_sum: 4 },
       { year: 2024, case_sum: 6 },
-      { year: 2025, case_sum: 3 },
+      { year: 2025, case_sum: 30 },
     ],
   },
   ห้วยขาแข้ง: {
@@ -119,7 +119,7 @@ export const fakeVillageStatsByName = {
     years: [
       { year: 2023, case_sum: 2 },
       { year: 2024, case_sum: 2 },
-      { year: 2025, case_sum: 1 },
+      { year: 2025, case_sum: 10 },
     ],
   },
   เขาน้อย: {
@@ -132,7 +132,7 @@ export const fakeVillageStatsByName = {
     years: [
       { year: 2023, case_sum: 3 },
       { year: 2024, case_sum: 4 },
-      { year: 2025, case_sum: 3 },
+      { year: 2025, case_sum: 30 },
     ],
   },
 };

@@ -81,8 +81,8 @@ const CenterModal = ({ visible, onClose, title, stats }) => {
           top: "50%",
           left: "50%",
           transform: "translate(-50%,-50%)",
-          width: "64vw",
-          height: "64vh",
+          width: "58vw",
+          height: "58vh",
           minWidth: 720,
           minHeight: 420,
           background: palette.card,
@@ -128,16 +128,22 @@ const CenterModal = ({ visible, onClose, title, stats }) => {
             ✕
           </button>
         </div>
-
         {/* body */}
-        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        <div
+          style={{
+            display: "flex",
+            flex: 1,
+            overflow: "hidden",
+            alignItems: "center",
+          }}
+        >
           {/* details panel */}
           <div
             style={{
               flex: 0.4,
               background: palette.bg,
               padding: 14,
-              borderLeft: "1px solid #e8f0f8",
+              borderLeft: "1px solid #f8e8e8ff",
               overflowY: "auto",
             }}
           >
@@ -308,7 +314,7 @@ const CenterModal = ({ visible, onClose, title, stats }) => {
 
             <div
               style={{
-                flex: 1,
+                // flex: 1,
                 background: palette.card,
                 borderRadius: 10,
                 padding: 8,
@@ -427,9 +433,9 @@ const CenterModal = ({ visible, onClose, title, stats }) => {
                         {/* value label (bigger for readability) */}
                         <text
                           x={x + barWidth / 2}
-                          y={Math.max(y - 8, padding.top + 10)}
+                          y={Math.max(y - 8, padding.top - 10)}
                           textAnchor="middle"
-                          fontSize="12"
+                          fontSize="20"
                           fontWeight={700}
                           fill={isSelected ? palette.highlight : "#082040"}
                         >
@@ -440,7 +446,7 @@ const CenterModal = ({ visible, onClose, title, stats }) => {
                           x={x + barWidth / 2}
                           y={svgH - 18}
                           textAnchor="middle"
-                          fontSize="11"
+                          fontSize="20"
                           fill={palette.muted}
                         >
                           {yr.year}

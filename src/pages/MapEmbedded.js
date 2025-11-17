@@ -1,12 +1,14 @@
 // src/pages/MapEmbedded.js
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import "maplibre-gl/dist/maplibre-gl.css";
+import RightTopWidgets from "../components/RightTopWidgets";
+import CenterModal from "../components/CenterModal";
 
 import {
   villagesGeoJson,
   fakeFetchVillageStatsByName,
+  // fakeVillageStatsByName, // not used here but available in your service
 } from "../services/fakeVillageApi";
-import CenterModal from "../components/CenterModal";
 
 // ================== CONFIG MAP ==================
 const DEFAULT_CENTER = [98.8, 16.8]; // giữa vùng village
@@ -74,6 +76,13 @@ const addVillageLayers = (map) => {
       type: "geojson",
       data: villagesGeoJson,
     });
+  } else {
+    // nếu đã có source, cập nhật data (an toàn khi reload style)
+    try {
+      map.getSource("villages")?.setData?.(villagesGeoJson);
+    } catch (err) {
+      // some styles may recreate sources; ignore
+    }
   }
 
   // 3) Symbol layer: icon pulsing + số (count) ở giữa
@@ -130,7 +139,6 @@ const addVillageLayers = (map) => {
   }
 };
 
-// ======================= Modal React (centered) =======================
 // ======================= COMPONENT =======================
 const MapEmbedded = ({ onSelectVillage = () => {} }) => {
   const [style, setStyle] = useState("light");
@@ -151,8 +159,26 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
   const [modalTitle, setModalTitle] = useState("");
   const [modalStats, setModalStats] = useState(null);
 
+  const [data, setData] = useState([]);
+
+  // lấy data villages (từ fake service)
+  const getVillagesData = useCallback(() => {
+    try {
+      const rs = villagesGeoJson;
+      if (!rs) return null;
+      setData(rs);
+    } catch (err) {
+      console.error(err);
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    getVillagesData();
+  }, [getVillagesData]);
+
   // helper: add / update layer highlight kết quả search
-  const addOrUpdateSearchLayer = (map, geojson) => {
+  const addOrUpdateSearchLayer = useCallback((map, geojson) => {
     if (!map) return;
 
     const hasPolygon = geojson.features.some((f) =>
@@ -220,10 +246,10 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
     }
 
     searchGeoJsonRef.current = geojson;
-  };
+  }, []);
 
   // clear search layer (dùng khi Reset view)
-  const clearSearchLayer = () => {
+  const clearSearchLayer = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
 
@@ -233,19 +259,27 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
       "search-result-point",
     ].forEach((id) => {
       if (map.getLayer(id)) {
-        map.removeLayer(id);
+        try {
+          map.removeLayer(id);
+        } catch (err) {
+          // ignore
+        }
       }
     });
 
     if (map.getSource("search-result")) {
-      map.removeSource("search-result");
+      try {
+        map.removeSource("search-result");
+      } catch (err) {
+        // ignore
+      }
     }
 
     searchGeoJsonRef.current = null;
-  };
+  }, []);
 
   // RESET VIEW
-  const handleResetView = () => {
+  const handleResetView = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
 
@@ -265,7 +299,74 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
       bearing: 0,
       pitch: 0,
     });
-  };
+  }, [clearSearchLayer]);
+
+  // ============================
+  // onClickVillage: single handler dùng cho map click & Top5 click
+  // Accept either: (eventFromMap) or (feature)
+  // ============================
+  const onClickVillage = useCallback(
+    async (maybeEventOrFeature) => {
+      try {
+        const map = mapRef.current;
+        if (!map) return;
+
+        // extract feature
+        let feature = null;
+
+        // case A: called from map event (maplibre event has .features)
+        if (maybeEventOrFeature && maybeEventOrFeature.features) {
+          feature = maybeEventOrFeature.features[0];
+        } else if (maybeEventOrFeature && maybeEventOrFeature.properties) {
+          // case B: called from Top5Card with feature object
+          feature = maybeEventOrFeature;
+        }
+
+        if (!feature) return;
+
+        const name = feature.properties?.name;
+        const coords = feature.geometry?.coordinates;
+
+        // if point, get lon/lat
+        let lngLat = null;
+        if (
+          coords &&
+          (feature.geometry.type === "Point" ||
+            feature.geometry.type === "MultiPoint")
+        ) {
+          const [lon, lat] = coords;
+          lngLat = { lng: lon, lat };
+        } else if (feature.bbox && feature.bbox.length === 4) {
+          // fallback: center of bbox
+          const [minLon, minLat, maxLon, maxLat] = feature.bbox;
+          lngLat = { lng: (minLon + maxLon) / 2, lat: (minLat + maxLat) / 2 };
+        }
+
+        // zoom nhẹ vào village nếu có tọa độ
+        if (lngLat) {
+          map.easeTo({
+            center: [lngLat.lng, lngLat.lat],
+            zoom: Math.max(map.getZoom(), 8),
+            duration: 600,
+          });
+        }
+
+        // GỌI FAKE API (dùng hàm từ service)
+        const apiData = await fakeFetchVillageStatsByName(name);
+
+        // callback lên parent (nếu cần)
+        onSelectVillage(name, apiData);
+
+        // show React modal (centered, 1/3 screen)
+        setModalTitle(name);
+        setModalStats(apiData || null);
+        setModalVisible(true);
+      } catch (err) {
+        console.error("onClickVillage error:", err);
+      }
+    },
+    [onSelectVillage]
+  );
 
   // ================== AUTOCOMPLETE: CALL NOMINATIM ==================
   useEffect(() => {
@@ -323,49 +424,52 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
     };
   }, [searchText]);
 
-  // chọn 1 gợi ý
-  const handleSelectSuggestion = (feature) => {
-    const map = mapRef.current;
-    if (!map) return;
+  // handleSelectSuggestion (chọn gợi ý)
+  const handleSelectSuggestion = useCallback(
+    (feature) => {
+      const map = mapRef.current;
+      if (!map) return;
 
-    setSuggestions([]);
-    const { properties, geometry, bbox } = feature;
+      setSuggestions([]);
+      const { properties, geometry, bbox } = feature;
 
-    // set text lên input
-    if (properties?.display_name) {
-      setSearchText(properties.display_name);
-    }
+      // set text lên input
+      if (properties?.display_name) {
+        setSearchText(properties.display_name);
+      }
 
-    // highlight geometry
-    if (geometry) {
-      const geojson = {
-        type: "FeatureCollection",
-        features: [feature],
-      };
-      addOrUpdateSearchLayer(map, geojson);
-    } else {
-      clearSearchLayer();
-    }
+      // highlight geometry
+      if (geometry) {
+        const geojson = {
+          type: "FeatureCollection",
+          features: [feature],
+        };
+        addOrUpdateSearchLayer(map, geojson);
+      } else {
+        clearSearchLayer();
+      }
 
-    // zoom theo bbox nếu có, không thì dùng point
-    if (bbox && bbox.length === 4) {
-      const [minLon, minLat, maxLon, maxLat] = bbox;
-      map.fitBounds(
-        [
-          [minLon, minLat],
-          [maxLon, maxLat],
-        ],
-        { padding: 40, duration: 800 }
-      );
-    } else if (geometry?.type === "Point") {
-      const [lon, lat] = geometry.coordinates;
-      map.easeTo({
-        center: [lon, lat],
-        zoom: 10,
-        duration: 800,
-      });
-    }
-  };
+      // zoom theo bbox nếu có, không thì dùng point
+      if (bbox && bbox.length === 4) {
+        const [minLon, minLat, maxLon, maxLat] = bbox;
+        map.fitBounds(
+          [
+            [minLon, minLat],
+            [maxLon, maxLat],
+          ],
+          { padding: 40, duration: 800 }
+        );
+      } else if (geometry?.type === "Point") {
+        const [lon, lat] = geometry.coordinates;
+        map.easeTo({
+          center: [lon, lat],
+          zoom: 10,
+          duration: 800,
+        });
+      }
+    },
+    [addOrUpdateSearchLayer, clearSearchLayer]
+  );
 
   // INIT MAP
   useEffect(() => {
@@ -405,32 +509,7 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
           });
         });
 
-        // CLICK VILLAGE -> gọi fake API + show modal
-        const onClickVillage = async (e) => {
-          const feature = e.features && e.features[0];
-          if (!feature) return;
-
-          const name = feature.properties?.name;
-          const coordinates = feature.geometry.coordinates;
-          const lngLat = { lng: coordinates[0], lat: coordinates[1] };
-
-          // zoom nhẹ vào village
-          map.easeTo({
-            center: [lngLat.lng, lngLat.lat],
-            zoom: Math.max(map.getZoom(), 8),
-            duration: 600,
-          });
-
-          // GỌI FAKE API
-          const apiData = await fakeFetchVillageStatsByName(name);
-          onSelectVillage(name, apiData);
-
-          // show React modal (centered, 1/3 screen)
-          setModalTitle(name);
-          setModalStats(apiData || null);
-          setModalVisible(true);
-        };
-
+        // CLICK VILLAGE -> gọi onClickVillage (chung)
         clickableLayers.forEach((layerId) => {
           map.on("click", layerId, onClickVillage);
         });
@@ -446,14 +525,22 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
       });
 
       return () => {
-        map.remove();
+        try {
+          map.remove();
+        } catch (err) {
+          // ignore
+        }
       };
     })();
 
     return () => {
       canceled = true;
       if (mapRef.current) {
-        mapRef.current.remove();
+        try {
+          mapRef.current.remove();
+        } catch (err) {
+          // ignore
+        }
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -539,7 +626,7 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
         fontFamily: "Inter, Arial, sans-serif",
       }}
     >
-      {/* Search (moved to top-right) */}
+      {/* Search (top-left) */}
       <div
         style={{
           position: "absolute",
@@ -624,7 +711,6 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
       {/* suggestion dropdown */}
       {renderSuggestions()}
 
-      {/* panel điều khiển ở bottom-left (gọn) */}
       {/* compact control - bottom-left */}
       <div
         style={{
@@ -646,12 +732,10 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
             minWidth: 110,
           }}
         >
-          {/* small title (optional) */}
           <div style={{ fontSize: 12, fontWeight: 700, color: "#222" }}>
             Map
           </div>
 
-          {/* actions */}
           <div style={{ display: "flex", gap: 6 }}>
             <button
               onClick={() => setStyle("light")}
@@ -695,6 +779,13 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
         onClose={() => setModalVisible(false)}
         title={modalTitle}
         stats={modalStats}
+      />
+
+      {/* Right widgets — pass the shared onClickVillage handler */}
+      <RightTopWidgets
+        data={data}
+        onClickVillage={onClickVillage}
+        loading={false}
       />
     </div>
   );
