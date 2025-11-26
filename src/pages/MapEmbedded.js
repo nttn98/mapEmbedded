@@ -1,14 +1,20 @@
 // src/pages/MapEmbedded.js
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import "maplibre-gl/dist/maplibre-gl.css";
+
 import RightTopWidgets from "../components/RightTopWidgets";
 import CenterModal from "../components/CenterModal";
+import MapLayerControls from "../components/MapLayerControls";
+
+import top3Image from "../assets/top3.png";
 
 import {
   villagesGeoJson,
   fakeFetchVillageStatsByName,
-  // fakeVillageStatsByName, // not used here but available in your service
 } from "../services/fakeVillageApi";
+
+import thailandStatesGeoJson from "../data/Thailand_states_provinces.simplified.geojson";
+import thailandDistrictsGeoJson from "../data/Thailand_districts_counties.simplified.geojson";
 
 // ================== CONFIG MAP ==================
 const DEFAULT_CENTER = [98.8, 16.8]; // giữa vùng village
@@ -18,124 +24,231 @@ const mapStyles = {
   light: "https://tiles.stadiamaps.com/styles/alidade_smooth.json",
 };
 
-// ====== TẠO IMAGE PULSING + LAYER VILLAGE ======
+// ================== VILLAGE LAYERS ==================
 const addVillageLayers = (map) => {
   if (!map) return;
 
-  // 1) Image pulsing-dot (animation luôn chạy)
-  if (!map.hasImage("pulsing-dot-small")) {
-    const size = 300;
-    const pulsingDot = {
-      width: size,
-      height: size,
-      data: new Uint8Array(size * size * 4),
-      onAdd() {
-        const canvas = document.createElement("canvas");
-        canvas.width = this.width;
-        canvas.height = this.height;
-        this.context = canvas.getContext("2d");
-      },
-      render() {
-        const duration = 5000;
-        const t = (performance.now() % duration) / duration;
+  // --- 0) Tính danh sách top 2 -> top 4 theo count (hoặc cases / case_sum) ---
+  const features = (villagesGeoJson && villagesGeoJson.features) || [];
+  const scored = features
+    .map((f) => {
+      const p = f.properties || {};
+      const score = Number(p.count ?? p.cases ?? p.case_sum ?? 0);
+      return { feature: f, score };
+    })
+    .filter(
+      (x) =>
+        x.feature &&
+        x.feature.geometry &&
+        x.feature.geometry.type === "Point" &&
+        isFinite(x.score)
+    );
 
-        const radius = (size / 2) * 0.25;
-        const outerRadius = (size / 2) * 0.7 * t + radius;
-        const ctx = this.context;
+  scored.sort((a, b) => b.score - a.score); // lớn → nhỏ
 
-        ctx.clearRect(0, 0, this.width, this.height);
+  // 2nd..4th (bỏ phần tử 0 là top1)
+  const top234 = scored.slice(1, 4);
 
-        // outer pulse
-        ctx.beginPath();
-        ctx.arc(this.width / 2, this.height / 2, outerRadius, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255, 0, 0, ${1 - t})`;
-        ctx.fill();
+  // dùng name || village_name để chắc ăn
+  const top234Names = top234
+    .map((x) => {
+      const p = x.feature.properties || {};
+      return p.name || p.village_name || null;
+    })
+    .filter(Boolean);
 
-        // inner dot
-        ctx.beginPath();
-        ctx.arc(this.width / 2, this.height / 2, radius, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(255, 0, 0, 1)";
-        ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 2;
-        ctx.fill();
-        ctx.stroke();
+  // --- 1) Image pulsing-dot (animation luôn chạy, dùng cho village thường) ---
+  try {
+    if (!map.hasImage || !map.hasImage("pulsing-dot-small")) {
+      const size = 300;
+      const pulsingDot = {
+        width: size,
+        height: size,
+        data: new Uint8Array(size * size * 4),
+        onAdd() {
+          const canvas = document.createElement("canvas");
+          canvas.width = this.width;
+          canvas.height = this.height;
+          this.context = canvas.getContext("2d");
+        },
+        render() {
+          const duration = 5000;
+          const t = (performance.now() % duration) / duration;
 
-        this.data = ctx.getImageData(0, 0, this.width, this.height).data;
+          const radius = (size / 2) * 0.25;
+          const outerRadius = (size / 2) * 0.7 * t + radius;
+          const ctx = this.context;
 
-        map.triggerRepaint();
-        return true;
-      },
-    };
+          ctx.clearRect(0, 0, this.width, this.height);
 
-    map.addImage("pulsing-dot-small", pulsingDot, { pixelRatio: 2 });
-  }
+          // outer pulse
+          ctx.beginPath();
+          ctx.arc(this.width / 2, this.height / 2, outerRadius, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(255, 0, 0, ${1 - t})`;
+          ctx.fill();
 
-  // 2) Source villages (nếu chưa có)
-  if (!map.getSource("villages")) {
-    map.addSource("villages", {
-      type: "geojson",
-      data: villagesGeoJson,
-    });
-  } else {
-    // nếu đã có source, cập nhật data (an toàn khi reload style)
-    try {
-      map.getSource("villages")?.setData?.(villagesGeoJson);
-    } catch (err) {
-      // some styles may recreate sources; ignore
+          // inner dot
+          ctx.beginPath();
+          ctx.arc(this.width / 2, this.height / 2, radius, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(255, 0, 0, 1)";
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 2;
+          ctx.fill();
+          ctx.stroke();
+
+          this.data = ctx.getImageData(0, 0, this.width, this.height).data;
+
+          try {
+            map.triggerRepaint();
+          } catch {}
+          return true;
+        },
+      };
+
+      map.addImage("pulsing-dot-small", pulsingDot, { pixelRatio: 2 });
     }
+  } catch (err) {
+    console.warn("pulsing-dot-small error:", err);
   }
 
-  // 3) Symbol layer: icon pulsing + số (count) ở giữa
-  if (!map.getLayer("village-symbol")) {
-    map.addLayer({
-      id: "village-symbol",
-      type: "symbol",
-      source: "villages",
-      layout: {
-        "icon-image": "pulsing-dot-small",
-        "icon-size": 0.6,
-        "icon-anchor": "center",
-        // show all icons even when crowded
-        "icon-allow-overlap": true,
-        "icon-ignore-placement": true,
-
-        "text-field": ["to-string", ["get", "count"]],
-        "text-size": 11,
-        "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
-        "text-offset": [0, 0],
-        "text-anchor": "center",
-        "text-allow-overlap": true,
-        "text-ignore-placement": true,
-      },
-      paint: {
-        "text-color": "#ffffff",
-        "text-halo-color": "rgba(0,0,0,0.3)",
-        "text-halo-width": 1,
-      },
-    });
+  // --- 1b) Image top3Image (dùng cho top2-4, không pulsing) ---
+  try {
+    if (!map.hasImage || !map.hasImage("top3-marker")) {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        try {
+          if (!map.hasImage("top3-marker")) {
+            // dùng ảnh gốc, phóng to bằng icon-size
+            map.addImage("top3-marker", img, { pixelRatio: 1 });
+          }
+        } catch (err) {
+          console.warn("addImage top3-marker failed:", err);
+        }
+      };
+      img.src = top3Image;
+    }
+  } catch (err) {
+    console.warn("top3-marker image error:", err);
   }
 
-  // 4) Tên village bên dưới
-  if (!map.getLayer("village-name")) {
-    map.addLayer({
-      id: "village-name",
-      type: "symbol",
-      source: "villages",
-      layout: {
-        "text-field": ["get", "name"],
-        "text-size": 11,
-        "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
-        "text-anchor": "top",
-        "text-offset": [0, 1.4],
-        // keep names readable but allow overlap when crowded
-        "text-allow-overlap": false,
-      },
-      paint: {
-        "text-color": "#b30000",
-        "text-halo-color": "#ffffff",
-        "text-halo-width": 1,
-      },
-    });
+  // --- 2) Source villages ---
+  try {
+    if (!map.getSource("villages")) {
+      map.addSource("villages", {
+        type: "geojson",
+        data: villagesGeoJson,
+      });
+    } else {
+      try {
+        map.getSource("villages")?.setData?.(villagesGeoJson);
+      } catch (err) {
+        // ignore setData error
+      }
+    }
+  } catch (err) {
+    console.warn("ensuring villages source failed:", err);
+  }
+
+  // --- 3) Symbol layer: icon + số (count) ở giữa ---
+  try {
+    // biểu thức dùng name || village_name để kiểm tra top234
+    const isTopExpr = [
+      "in",
+      ["coalesce", ["get", "name"], ["get", "village_name"]],
+      ["literal", top234Names],
+    ];
+
+    if (!map.getLayer("village-symbol")) {
+      map.addLayer({
+        id: "village-symbol",
+        type: "symbol",
+        source: "villages",
+        layout: {
+          "icon-image": [
+            "case",
+            isTopExpr,
+            "top3-marker", // top2-4: dùng top3 image
+            "pulsing-dot-small", // còn lại: pulsing-dot
+          ],
+          "icon-size": ["case", isTopExpr, 0.7, 0.6],
+          "icon-anchor": "center",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+
+          "text-field": [
+            "to-string",
+            [
+              "coalesce",
+              ["get", "count"],
+              [
+                "coalesce",
+                ["get", "cases"],
+                ["coalesce", ["get", "case_sum"], ""],
+              ],
+            ],
+          ],
+          "text-size": 11,
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-offset": [0, 0],
+          "text-anchor": "center",
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+        },
+        paint: {
+          "text-color": "#ffffff",
+          "text-halo-color": "rgba(0,0,0,0.3)",
+          "text-halo-width": 1,
+        },
+      });
+    } else {
+      // nếu layer đã tồn tại (styledata gọi lại), update icon-image/icon-size với top234Names mới
+      map.setLayoutProperty("village-symbol", "icon-image", [
+        "case",
+        isTopExpr,
+        "top3-marker",
+        "pulsing-dot-small",
+      ]);
+      map.setLayoutProperty("village-symbol", "icon-size", [
+        "case",
+        isTopExpr,
+        0.7,
+        0.6,
+      ]);
+    }
+  } catch (err) {
+    console.warn("Could not add/update village-symbol layer:", err);
+  }
+
+  // --- 4) Tên village bên dưới ---
+  try {
+    if (!map.getLayer("village-name")) {
+      map.addLayer({
+        id: "village-name",
+        type: "symbol",
+        source: "villages",
+        layout: {
+          "text-field": [
+            "coalesce",
+            ["get", "name"],
+            ["get", "village_name"],
+            "",
+          ],
+          "text-size": 11,
+          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+          "text-anchor": "top",
+          "text-offset": [0, 1.4],
+          "text-allow-overlap": false,
+        },
+        paint: {
+          "text-color": "#b30000",
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 1,
+        },
+      });
+    }
+  } catch (err) {
+    console.warn("Could not add village-name layer:", err);
   }
 };
 
@@ -148,6 +261,10 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
   const [suggestions, setSuggestions] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
+
+  // toggle boundary overlays
+  const [showStates, setShowStates] = useState(false);
+  const [showDistricts, setShowDistricts] = useState(false);
 
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
@@ -165,17 +282,146 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
   const getVillagesData = useCallback(() => {
     try {
       const rs = villagesGeoJson;
-      if (!rs) return null;
+      if (!rs) return;
       setData(rs);
     } catch (err) {
       console.error(err);
-      return null;
     }
   }, []);
 
   useEffect(() => {
     getVillagesData();
   }, [getVillagesData]);
+
+  // ====== BOUNDARY LAYERS: STATES & DISTRICTS ======
+  const addStatesLayer = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (!map.getSource("th-states")) {
+      map.addSource("th-states", {
+        type: "geojson",
+        data: thailandStatesGeoJson,
+      });
+    }
+
+    if (!map.getLayer("th-states-fill")) {
+      map.addLayer(
+        {
+          id: "th-states-fill",
+          type: "fill",
+          source: "th-states",
+          paint: {
+            "fill-color": "#0ea5e9",
+            "fill-opacity": 0.12,
+          },
+        },
+        "village-symbol"
+      );
+    }
+
+    if (!map.getLayer("th-states-outline")) {
+      map.addLayer(
+        {
+          id: "th-states-outline",
+          type: "line",
+          source: "th-states",
+          paint: {
+            "line-color": "#0284c7",
+            "line-width": 1,
+          },
+        },
+        "village-symbol"
+      );
+    }
+  }, []);
+
+  const removeStatesLayer = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    try {
+      if (map.getLayer("th-states-outline"))
+        map.removeLayer("th-states-outline");
+      if (map.getLayer("th-states-fill")) map.removeLayer("th-states-fill");
+      if (map.getSource("th-states")) map.removeSource("th-states");
+    } catch (err) {
+      console.warn("removeStatesLayer error:", err);
+    }
+  }, []);
+
+  const addDistrictsLayer = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (!map.getSource("th-districts")) {
+      map.addSource("th-districts", {
+        type: "geojson",
+        data: thailandDistrictsGeoJson,
+      });
+    }
+
+    if (!map.getLayer("th-districts-fill")) {
+      map.addLayer(
+        {
+          id: "th-districts-fill",
+          type: "fill",
+          source: "th-districts",
+          paint: {
+            "fill-color": "#22c55e",
+            "fill-opacity": 0.1,
+          },
+        },
+        "village-symbol"
+      );
+    }
+
+    if (!map.getLayer("th-districts-outline")) {
+      map.addLayer(
+        {
+          id: "th-districts-outline",
+          type: "line",
+          source: "th-districts",
+          paint: {
+            "line-color": "#16a34a",
+            "line-width": 0.7,
+          },
+        },
+        "village-symbol"
+      );
+    }
+  }, []);
+
+  const removeDistrictsLayer = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    try {
+      if (map.getLayer("th-districts-outline"))
+        map.removeLayer("th-districts-outline");
+      if (map.getLayer("th-districts-fill"))
+        map.removeLayer("th-districts-fill");
+      if (map.getSource("th-districts")) map.removeSource("th-districts");
+    } catch (err) {
+      console.warn("removeDistrictsLayer error:", err);
+    }
+  }, []);
+
+  const handleToggleStates = useCallback(() => {
+    setShowStates((prev) => {
+      const next = !prev;
+      if (next) addStatesLayer();
+      else removeStatesLayer();
+      return next;
+    });
+  }, [addStatesLayer, removeStatesLayer]);
+
+  const handleToggleDistricts = useCallback(() => {
+    setShowDistricts((prev) => {
+      const next = !prev;
+      if (next) addDistrictsLayer();
+      else removeDistrictsLayer();
+      return next;
+    });
+  }, [addDistrictsLayer, removeDistrictsLayer]);
 
   // helper: add / update layer highlight kết quả search
   const addOrUpdateSearchLayer = useCallback((map, geojson) => {
@@ -261,18 +507,14 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
       if (map.getLayer(id)) {
         try {
           map.removeLayer(id);
-        } catch (err) {
-          // ignore
-        }
+        } catch {}
       }
     });
 
     if (map.getSource("search-result")) {
       try {
         map.removeSource("search-result");
-      } catch (err) {
-        // ignore
-      }
+      } catch {}
     }
 
     searchGeoJsonRef.current = null;
@@ -288,9 +530,14 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
     setSuggestions([]);
     setSearchError("");
 
-    // close modal if any
     setModalVisible(false);
     setModalStats(null);
+
+    // tắt states & districts + remove layers để đỡ lag
+    removeStatesLayer();
+    removeDistrictsLayer();
+    setShowStates(false);
+    setShowDistricts(false);
 
     map.easeTo({
       center: DEFAULT_CENTER,
@@ -299,27 +546,21 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
       bearing: 0,
       pitch: 0,
     });
-  }, [clearSearchLayer]);
+  }, [clearSearchLayer, removeStatesLayer, removeDistrictsLayer]);
 
-  // ============================
-  // onClickVillage: single handler dùng cho map click & Top5 click
-  // Accept either: (eventFromMap) or (feature)
-  // ============================
+  // ================== onClickVillage (map + widgets) ==================
   const onClickVillage = useCallback(
     async (maybeEventOrFeature) => {
       try {
         const map = mapRef.current;
         if (!map) return;
 
-        // extract feature
         let feature = null;
 
-        // case A: called from map event (maplibre event has .features)
         if (maybeEventOrFeature && maybeEventOrFeature.features) {
-          feature = maybeEventOrFeature.features[0];
+          feature = maybeEventOrFeature.features[0]; // from map click
         } else if (maybeEventOrFeature && maybeEventOrFeature.properties) {
-          // case B: called from Top5Card with feature object
-          feature = maybeEventOrFeature;
+          feature = maybeEventOrFeature; // from RightTopWidgets
         }
 
         if (!feature) return;
@@ -327,7 +568,6 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
         const name = feature.properties?.name;
         const coords = feature.geometry?.coordinates;
 
-        // if point, get lon/lat
         let lngLat = null;
         if (
           coords &&
@@ -337,12 +577,10 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
           const [lon, lat] = coords;
           lngLat = { lng: lon, lat };
         } else if (feature.bbox && feature.bbox.length === 4) {
-          // fallback: center of bbox
           const [minLon, minLat, maxLon, maxLat] = feature.bbox;
           lngLat = { lng: (minLon + maxLon) / 2, lat: (minLat + maxLat) / 2 };
         }
 
-        // zoom nhẹ vào village nếu có tọa độ
         if (lngLat) {
           map.easeTo({
             center: [lngLat.lng, lngLat.lat],
@@ -351,13 +589,10 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
           });
         }
 
-        // GỌI FAKE API (dùng hàm từ service)
         const apiData = await fakeFetchVillageStatsByName(name);
 
-        // callback lên parent (nếu cần)
         onSelectVillage(name, apiData);
 
-        // show React modal (centered, 1/3 screen)
         setModalTitle(name);
         setModalStats(apiData || null);
         setModalVisible(true);
@@ -392,7 +627,6 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
           signal: controller.signal,
           headers: {
             Accept: "application/json",
-            // NOTE: tốt nhất nên gọi từ backend và set User-Agent ở server
           },
         });
 
@@ -414,7 +648,6 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
       }
     };
 
-    // debounce nhẹ
     const timer = setTimeout(fetchSuggestions, 400);
 
     return () => {
@@ -433,12 +666,10 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
       setSuggestions([]);
       const { properties, geometry, bbox } = feature;
 
-      // set text lên input
       if (properties?.display_name) {
         setSearchText(properties.display_name);
       }
 
-      // highlight geometry
       if (geometry) {
         const geojson = {
           type: "FeatureCollection",
@@ -449,7 +680,6 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
         clearSearchLayer();
       }
 
-      // zoom theo bbox nếu có, không thì dùng point
       if (bbox && bbox.length === 4) {
         const [minLon, minLat, maxLon, maxLat] = bbox;
         map.fitBounds(
@@ -476,9 +706,10 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
     let canceled = false;
 
     (async () => {
-      const maplibregl = await import("maplibre-gl");
+      const maplibreModule = await import("maplibre-gl");
       if (canceled) return;
 
+      const maplibregl = maplibreModule.default || maplibreModule;
       maplibreRef.current = maplibregl;
 
       const map = new maplibregl.Map({
@@ -499,7 +730,6 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
 
         const clickableLayers = ["village-symbol", "village-name"];
 
-        // Hover đổi cursor
         clickableLayers.forEach((layerId) => {
           map.on("mouseenter", layerId, () => {
             map.getCanvas().style.cursor = "pointer";
@@ -507,30 +737,21 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
           map.on("mouseleave", layerId, () => {
             map.getCanvas().style.cursor = "";
           });
-        });
-
-        // CLICK VILLAGE -> gọi onClickVillage (chung)
-        clickableLayers.forEach((layerId) => {
           map.on("click", layerId, onClickVillage);
         });
       });
 
-      // Khi đổi style – re-add layers + search result
       map.on("styledata", () => {
         addVillageLayers(map);
 
         if (searchGeoJsonRef.current) {
           addOrUpdateSearchLayer(map, searchGeoJsonRef.current);
         }
-      });
 
-      return () => {
-        try {
-          map.remove();
-        } catch (err) {
-          // ignore
-        }
-      };
+        // re-apply boundaries nếu đang bật
+        if (showStates) addStatesLayer();
+        if (showDistricts) addDistrictsLayer();
+      });
     })();
 
     return () => {
@@ -538,22 +759,20 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
       if (mapRef.current) {
         try {
           mapRef.current.remove();
-        } catch (err) {
-          // ignore
-        }
+        } catch {}
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // đổi style (hiện tại chỉ có light nhưng để sẵn)
+  // đổi style
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     map.setStyle(mapStyles[style]);
   }, [style]);
 
-  // render danh sách gợi ý (top-right)
+  // render danh sách gợi ý
   const renderSuggestions = () => {
     if (!suggestions.length) return null;
 
@@ -561,13 +780,14 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
       <div
         style={{
           position: "absolute",
-          top: 52,
-          right: 10,
+          top: 60,
+          left: 12,
           background: "#fff",
           borderRadius: 8,
           boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
           zIndex: 1200,
-          maxHeight: 300,
+          width: 310,
+          maxHeight: 350,
           overflowY: "auto",
           minWidth: 300,
         }}
@@ -711,64 +931,16 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
       {/* suggestion dropdown */}
       {renderSuggestions()}
 
-      {/* compact control - bottom-left */}
-      <div
-        style={{
-          position: "absolute",
-          left: 10,
-          bottom: 10,
-          zIndex: 1200,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            gap: 6,
-            alignItems: "center",
-            background: "#fff",
-            padding: "6px",
-            borderRadius: 9,
-            boxShadow: "0 8px 22px rgba(0,0,0,0.10)",
-            minWidth: 110,
-          }}
-        >
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#222" }}>
-            Map
-          </div>
-
-          <div style={{ display: "flex", gap: 6 }}>
-            <button
-              onClick={() => setStyle("light")}
-              style={{
-                padding: "6px 8px",
-                fontSize: 12,
-                borderRadius: 6,
-                border: "1px solid #eef2f6",
-                background: "#f8fbff",
-                cursor: "pointer",
-              }}
-              aria-label="Light style"
-            >
-              Light
-            </button>
-
-            <button
-              onClick={handleResetView}
-              style={{
-                padding: "6px 8px",
-                fontSize: 12,
-                borderRadius: 6,
-                border: "1px solid #eef2f6",
-                background: "#fff",
-                cursor: "pointer",
-              }}
-              aria-label="Reset view"
-            >
-              Reset
-            </button>
-          </div>
-        </div>
-      </div>
+      {/* bottom-left controls: tách ra component riêng */}
+      <MapLayerControls
+        styleName={style}
+        onChangeStyle={setStyle}
+        onResetView={handleResetView}
+        showStates={showStates}
+        showDistricts={showDistricts}
+        onToggleStates={handleToggleStates}
+        onToggleDistricts={handleToggleDistricts}
+      />
 
       {/* Map container */}
       <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
