@@ -1,6 +1,3 @@
-// src/components/MapLayerControls.js
-import React from "react";
-
 const toggleStyle = {
   wrapper: {
     display: "flex",

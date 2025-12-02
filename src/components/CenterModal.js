@@ -1,12 +1,6 @@
 import React, { useMemo, useState } from "react";
 
-/**
- * CenterModal (compact columns, no hover tooltip, click-to-highlight)
- *
- * Hooks are at the top to satisfy rules-of-hooks.
- */
 const CenterModal = ({ visible, onClose, title, stats }) => {
-  // Hooks
   const detail = stats?.detail || null;
   const years = detail?.years || [];
 
@@ -19,13 +13,10 @@ const CenterModal = ({ visible, onClose, title, stats }) => {
     [years]
   );
 
-  // selected year state: clicking a bar or a year card toggles selection
   const [selectedYear, setSelectedYear] = useState(null);
 
-  // Early return after hooks
   if (!visible) return null;
 
-  // Chart sizing: smaller columns (half width)
   const svgW = 820;
   const svgH = 320;
   const padding = { top: 34, right: 20, bottom: 58, left: 56 };
@@ -33,10 +24,8 @@ const CenterModal = ({ visible, onClose, title, stats }) => {
   const innerH = svgH - padding.top - padding.bottom;
   const gap = 8;
   const barCount = Math.max(1, years.length);
-  // compute a "normal" bar width then halve it
   const baseBarWidth = Math.max(10, (innerW - gap * (barCount - 1)) / barCount);
   const barWidth = Math.max(6, Math.floor(baseBarWidth / 2)); // HALF width
-  // With narrow bars, center them in the available area horizontally.
   const totalBarsWidth = barCount * barWidth + (barCount - 1) * gap;
   const startOffset = padding.left + Math.max(0, (innerW - totalBarsWidth) / 2);
 
