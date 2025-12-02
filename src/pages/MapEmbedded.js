@@ -87,7 +87,11 @@ function normalizeVillageGeoJSON(vg) {
   return { ...vg, features };
 }
 
-const MapEmbedded = ({ onSelectVillage = () => {} }) => {
+const MapEmbedded = ({
+  onSelectVillage = () => {},
+  onNavigateToReport,
+  reportPath = "/dashboard/report",
+}) => {
   const [style, setStyle] = useState("light");
   const [selectedVillage, setSelectedVillage] = useState(null);
 
@@ -353,6 +357,20 @@ const MapEmbedded = ({ onSelectVillage = () => {} }) => {
       pitch: 0,
     });
   }, [clearSearchLayerWrapper, setSearchText]);
+
+  // --- NEW: report button handler ---
+  const handleOpenReport = useCallback(() => {
+    if (typeof onNavigateToReport === "function") {
+      try {
+        onNavigateToReport();
+        return;
+      } catch (e) {
+        console.warn("onNavigateToReport threw:", e);
+      }
+    }
+    // fallback to direct navigation
+    window.location.href = reportPath;
+  }, [onNavigateToReport, reportPath]);
 
   return (
     <div

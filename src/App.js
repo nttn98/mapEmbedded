@@ -1,14 +1,17 @@
-// src/App.js (hoặc page cha nào đó)
 import React from "react";
+import { useNavigate } from "react-router-dom";
 import MapEmbedded from "./pages/MapEmbedded";
 import "./App.css";
 
 function App() {
-  const handleSelectState = (stateName) => {
-    console.log("Selected state:", stateName);
-  };
+  const navigate = useNavigate();
 
-  return <MapEmbedded onSelectState={handleSelectState} />;
+  return (
+    <MapEmbedded
+      onNavigateToReport={() => navigate("/report")}
+      reportPath="/report"
+    />
+  );
 }
 
 export default App;
