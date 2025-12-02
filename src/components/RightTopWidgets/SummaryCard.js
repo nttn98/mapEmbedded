@@ -1,37 +1,39 @@
-// SummaryCard.jsx
+// src/components/RightTopWidgets/SummaryCard.js
 import React, { useMemo, useState } from "react";
 
 const nf = new Intl.NumberFormat("en-US");
 
 const SummaryCard = ({ data = null, year = 2025, width = 360 }) => {
-  const features = Array.isArray(data?.features) ? data.features : [];
+  const { total, ticks, percent } = useMemo(() => {
+    const feats = Array.isArray(data?.features) ? data.features : [];
 
-  const total = useMemo(
-    () => features.reduce((s, f) => s + Number(f?.properties?.count ?? 0), 0),
-    [features]
-  );
+    const tot = feats.reduce(
+      (s, f) => s + Number(f?.properties?.count ?? 0),
+      0
+    );
 
-  const axisMax = Math.max(10, Math.ceil(total / 1000) * 1000);
-  const ticks = Array.from({ length: 5 }, (_, i) =>
-    Math.round((axisMax / 4) * i)
-  );
-  const percent = Math.min(
-    100,
-    Math.round((total / Math.max(1, axisMax)) * 100)
-  );
+    const aMax = Math.max(10, Math.ceil(tot / 1000) * 1000);
+    const tks = Array.from({ length: 5 }, (_, i) => Math.round((aMax / 4) * i));
+    const pct = Math.min(100, Math.round((tot / Math.max(1, aMax)) * 100));
+
+    return {
+      features: feats,
+      total: tot,
+      axisMax: aMax,
+      ticks: tks,
+      percent: pct,
+    };
+  }, [data]);
 
   const [showTooltip, setShowTooltip] = useState(false);
 
-  // tooltip style (positioned relative to root card)
-  // đặt top: '50%' và translateY(-50%) để căn giữa theo chiều dọc
-  // translateX(-110%) để kéo tooltip ra bên trái thanh
   const tooltipStyleBase = {
     position: "absolute",
     top: "50%",
-    left: 12, // bắt đầu gần mép trái của nội dung (card có padding 12)
+    left: 12,
     transform: "translate(-110%, -50%)",
-    background: "#ffffff", // nền sáng cho dễ đọc
-    color: "#12202b", // chữ đậm và dễ đọc
+    background: "#ffffff",
+    color: "#12202b",
     padding: "8px 12px",
     borderRadius: 8,
     fontSize: 16,
@@ -45,10 +47,9 @@ const SummaryCard = ({ data = null, year = 2025, width = 360 }) => {
     opacity: 0,
   };
 
-  // arrow (triangle) style inside tooltip
   const arrowStyle = {
     position: "absolute",
-    right: -6, // đặt mũi tên hướng về phía phải (về phía thanh)
+    right: -6,
     top: "50%",
     transform: "translateY(-50%) rotate(45deg)",
     width: 12,
@@ -89,12 +90,9 @@ const SummaryCard = ({ data = null, year = 2025, width = 360 }) => {
         }}
         aria-hidden={!showTooltip}
       >
-        {/* content format: "2025 - 249" */}
         <span style={{ display: "inline-block", marginRight: 8 }}>
           {year} - {nf.format(total)}
         </span>
-
-        {/* arrow */}
         <div style={arrowStyle} />
       </div>
 
@@ -110,7 +108,7 @@ const SummaryCard = ({ data = null, year = 2025, width = 360 }) => {
         <div style={{ fontSize: 14, fontWeight: 700, color: "#0b5fff" }}>
           Summary
         </div>
-        <div style={{ fontSize: 12, color: "#9aa6b2" }}></div>
+        <div style={{ fontSize: 12, color: "#9aa6b2" }} />
       </div>
 
       {/* Big row */}
@@ -131,7 +129,7 @@ const SummaryCard = ({ data = null, year = 2025, width = 360 }) => {
             height: 36,
             background: "#e8f0ff",
             borderRadius: 6,
-            overflow: "hidden", // giữ overflow hidden cho bar nội bộ
+            overflow: "hidden",
             position: "relative",
             outline: "none",
             display: "flex",

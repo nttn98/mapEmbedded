@@ -1,16 +1,19 @@
-// Top5Card.jsx
+// src/components/RightTopWidgets/Top5Card.js
 import React, { useMemo } from "react";
 
 const nf = new Intl.NumberFormat("en-US");
 
 const Top5Card = ({ data, loading, onRowClick }) => {
-  const colors = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#3b82f6"]; // top1 → top5
-
+  // declare colors inside useMemo so dependency array only needs [data]
   const top5 = useMemo(() => {
-    const features = data?.features ?? [];
+    const colors = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#3b82f6"]; // top1 → top5
+    const features = Array.isArray(data?.features) ? data.features : [];
     const sorted = features
       .slice()
-      .sort((a, b) => b.properties.count - a.properties.count);
+      .sort(
+        (a, b) =>
+          Number(b?.properties?.count ?? 0) - Number(a?.properties?.count ?? 0)
+      );
     return sorted.slice(0, 5).map((item, index) => ({
       ...item,
       properties: {
@@ -93,7 +96,6 @@ const Top5Card = ({ data, loading, onRowClick }) => {
                 cursor: "pointer",
                 transition:
                   "transform 120ms ease, box-shadow 120ms ease, background 120ms ease",
-                // base background
                 background: "transparent",
               }}
               onMouseEnter={(e) => {
@@ -119,7 +121,6 @@ const Top5Card = ({ data, loading, onRowClick }) => {
                 e.currentTarget.style.transform = "none";
               }}
             >
-              {/* left accent (rank color) */}
               <div
                 style={{
                   width: 6,

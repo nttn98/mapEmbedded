@@ -58,3 +58,6 @@ button:hover {
   font-size: 14px;
   margin-top: 10px;
 }
+.maplibregl-ctrl-top-right {
+  display: none !important;
+}

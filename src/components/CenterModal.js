@@ -1,13 +1,19 @@
+// src/components/CenterModal.js
 import React, { useMemo, useState } from "react";
 
 const CenterModal = ({ visible, onClose, title, stats }) => {
-  const detail = stats?.detail || null;
-  const years = detail?.years || [];
+  // compute years inside useMemo so dependencies are stable
+  const years = useMemo(() => {
+    const detail = stats?.detail ?? null;
+    if (!detail) return [];
+    return Array.isArray(detail.years) ? detail.years : [];
+  }, [stats]);
 
   const total = useMemo(
     () => years.reduce((s, y) => s + Number(y.case_sum || 0), 0),
     [years]
   );
+
   const maxVal = useMemo(
     () => Math.max(1, ...years.map((y) => Number(y.case_sum || 0))),
     [years]
@@ -30,7 +36,6 @@ const CenterModal = ({ visible, onClose, title, stats }) => {
   const startOffset = padding.left + Math.max(0, (innerW - totalBarsWidth) / 2);
 
   const fmt = (n) => new Intl.NumberFormat().format(n);
-  const pct = (n) => (total ? ((n / total) * 100).toFixed(1) : "0.0");
 
   const palette = {
     bg: "#fbfdff",
@@ -97,9 +102,9 @@ const CenterModal = ({ visible, onClose, title, stats }) => {
         >
           <div>
             <div style={{ fontSize: 16, fontWeight: 800 }}>{title}</div>
-            {detail && (
+            {stats?.detail && (
               <div style={{ fontSize: 12, color: palette.muted, marginTop: 4 }}>
-                {detail.from_date} → {detail.to_date}
+                {stats.detail.from_date} → {stats.detail.to_date}
               </div>
             )}
           </div>
