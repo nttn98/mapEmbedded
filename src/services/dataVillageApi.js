@@ -1,10 +1,4 @@
-// src/fakeVillageApi.js
-
-// ================== FAKE DATA THEO VILLAGE ==================
-// Toạ độ mình đặt demo ở khu vực miền Bắc Thái Lan.
-// Sau này bạn thay bằng dữ liệu thật của bạn.
-
-export const fakeVillageStatsByName = {
+export const dataVillageStatsByName = {
   ก้องนา: {
     village_id: "6308040201",
     village_name: "ก้องนา",
@@ -140,7 +134,7 @@ export const fakeVillageStatsByName = {
 // ============= TẠO GEOJSON POINTS ĐỂ VẼ LÊN MAP =============
 export const villagesGeoJson = {
   type: "FeatureCollection",
-  features: Object.values(fakeVillageStatsByName).map((v) => ({
+  features: Object.values(dataVillageStatsByName).map((v) => ({
     type: "Feature",
     geometry: {
       type: "Point",
@@ -160,7 +154,7 @@ export async function fakeFetchVillageStatsByName(name) {
   // Giả lập network delay
   await new Promise((resolve) => setTimeout(resolve, 200));
 
-  const data = fakeVillageStatsByName[name];
+  const data = dataVillageStatsByName[name];
   if (!data) return null;
 
   const latestYear = data.years[data.years.length - 1];
@@ -182,7 +176,7 @@ export async function fakeFetchVillageStatsByName(name) {
 /*
 // Khi có API thật, bạn đổi hàm trên thành:
 
-export async function fakeFetchVillageStatsByName(name) {
+export async function FetchVillageStatsByName(name) {
   const res = await fetch(`/api/villages?name=${encodeURIComponent(name)}`);
   const json = await res.json();
   return json;

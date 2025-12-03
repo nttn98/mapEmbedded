@@ -9,7 +9,7 @@ import top3Image from "../assets/top3.png";
 import {
   villagesGeoJson,
   fakeFetchVillageStatsByName,
-} from "../services/fakeVillageApi";
+} from "../services/dataVillageApi";
 
 import thailandStatesGeoJson from "../data/Thailand_states_provinces.simplified.geojson";
 import thailandDistrictsGeoJson from "../data/Thailand_districts_counties.simplified.geojson";
@@ -34,8 +34,10 @@ import SuggestionsList from "../map/search/SuggestionsList";
 const DEFAULT_CENTER = [98.8, 16.8];
 const DEFAULT_ZOOM = 6;
 const mapStyles = {
-  light: "https://tiles.stadiamaps.com/styles/alidade_smooth.json",
+  light: "https://tiles.openfreemap.org/styles/bright",
 };
+
+const DEBUG = false;
 
 // Helper: same normalization logic used in the layer file so UI and layers agree
 function normalizeVillageGeoJSON(vg) {
@@ -69,16 +71,76 @@ function normalizeVillageGeoJSON(vg) {
     }
     p.label_count = isFinite(labelCount) ? labelCount : "";
 
-    // create point geometry if missing and lat/lng available
-    if (
-      (!f.geometry || f.geometry.type !== "Point") &&
-      p.latitude != null &&
-      p.longitude != null
-    ) {
-      f.geometry = {
-        type: "Point",
-        coordinates: [Number(p.longitude), Number(p.latitude)],
-      };
+    // create point geometry if missing and lat/lng available (ensure [lon, lat])
+    try {
+      const rawLon = p.longitude ?? p.lon ?? p.lng;
+      const rawLat = p.latitude ?? p.lat;
+      let lon = rawLon != null ? Number(rawLon) : NaN;
+      let lat = rawLat != null ? Number(rawLat) : NaN;
+
+      // fallback to geometry if provided
+      if ((!lon && !lat) || !isFinite(lon) || !isFinite(lat)) {
+        if (f.geometry && Array.isArray(f.geometry.coordinates)) {
+          const a = Number(f.geometry.coordinates[0]);
+          const b = Number(f.geometry.coordinates[1]);
+          if (isFinite(a) && isFinite(b)) {
+            // heuristics: if a in [-180,180] and b in [-90,90] assume [lon,lat]
+            if (Math.abs(a) <= 180 && Math.abs(b) <= 90) {
+              lon = a;
+              lat = b;
+            } else if (Math.abs(a) <= 90 && Math.abs(b) <= 180) {
+              // probably [lat,lon] -> swap
+              lon = b;
+              lat = a;
+            } else {
+              lon = a;
+              lat = b;
+            }
+          }
+        }
+      }
+
+      // sanity swaps if values look reversed
+      if (isFinite(lon) && isFinite(lat)) {
+        if ((lat > 90 || lat < -90) && lon <= 90 && lon >= -90) {
+          const tmp = lon;
+          lon = lat;
+          lat = tmp;
+        }
+        if (
+          (lon > 180 || lon < -180) &&
+          lat <= 180 &&
+          lat >= -180 &&
+          Math.abs(lat) <= 180
+        ) {
+          const tmp = lon;
+          lon = lat;
+          lat = tmp;
+        }
+      }
+
+      if (
+        (!f.geometry || f.geometry.type !== "Point") &&
+        isFinite(lon) &&
+        isFinite(lat)
+      ) {
+        f.geometry = { type: "Point", coordinates: [Number(lon), Number(lat)] };
+      } else if (
+        f.geometry &&
+        f.geometry.type === "Point" &&
+        Array.isArray(f.geometry.coordinates)
+      ) {
+        const [c0, c1] = f.geometry.coordinates;
+        if (isFinite(c0) && isFinite(c1)) {
+          // ensure numbers
+          f.geometry.coordinates = [
+            Number(f.geometry.coordinates[0]),
+            Number(f.geometry.coordinates[1]),
+          ];
+        }
+      }
+    } catch (e) {
+      // ignore coordinate normalization errors
     }
 
     return f;
@@ -228,6 +290,104 @@ const MapEmbedded = ({
     [onSelectVillage]
   );
 
+  // --- Utility: ensure images are present on the map (we still add top3-marker safely) ---
+  async function ensureImages(map) {
+    if (!map) return;
+
+    const hasImageSafe = (name) =>
+      typeof map.hasImage === "function" ? map.hasImage(name) : false;
+
+    // 1) Try to add top3-marker but defensively remove existing id first
+    try {
+      if (top3Image) {
+        try {
+          if (
+            typeof map.hasImage === "function" &&
+            map.hasImage("top3-marker")
+          ) {
+            try {
+              if (typeof map.removeImage === "function")
+                map.removeImage("top3-marker");
+              if (DEBUG)
+                console.debug("removed existing top3-marker before re-adding");
+            } catch (remErr) {
+              if (DEBUG)
+                console.warn("removeImage('top3-marker') failed:", remErr);
+            }
+          }
+        } catch (e) {}
+
+        try {
+          const img = await new Promise((resolve, reject) => {
+            const i = new Image();
+            i.crossOrigin = "anonymous";
+            i.onload = () => resolve(i);
+            i.onerror = (err) => reject(err);
+            i.src = top3Image;
+          });
+
+          const cw = img.naturalWidth || img.width || 64;
+          const ch = img.naturalHeight || img.height || 64;
+          const canvas = document.createElement("canvas");
+          canvas.width = cw;
+          canvas.height = ch;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, cw, ch);
+
+          try {
+            map.addImage("top3-marker", canvas, { pixelRatio: 1 });
+            if (DEBUG) console.debug("registered top3-marker");
+          } catch (addErr) {
+            if (!/already exists/i.test(addErr?.message || "")) {
+              console.warn("ensureImages addImage top3-marker failed:", addErr);
+            } else {
+              if (DEBUG) console.debug("top3-marker already exists (caught)");
+            }
+          }
+        } catch (loadErr) {
+          if (DEBUG) console.warn("ensureImages top3 load failed:", loadErr);
+        }
+      }
+    } catch (e) {
+      if (DEBUG) console.warn("ensureImages top3 outer error:", e);
+    }
+  }
+
+  // move village layers to be before first symbol layer (so they appear below labels)
+  function moveVillageLayersBelowLabels(map) {
+    if (!map || !map.getStyle) return;
+    try {
+      const layers = (map.getStyle() && map.getStyle().layers) || [];
+      let firstSymbolId = null;
+      for (let i = 0; i < layers.length; i++) {
+        if (layers[i].type === "symbol") {
+          firstSymbolId = layers[i].id;
+          break;
+        }
+      }
+      if (!firstSymbolId) return;
+
+      // known village layer ids created by addVillageLayers
+      const candidateLayers = [
+        "village-name",
+        "village-symbol",
+        "village-fill",
+        "village-circle",
+      ];
+      candidateLayers.forEach((lid) => {
+        try {
+          if (map.getLayer && map.getLayer(lid)) {
+            map.moveLayer(lid, firstSymbolId);
+          }
+        } catch (e) {
+          // ignore individual failures
+        }
+      });
+    } catch (e) {
+      console.warn("moveVillageLayersBelowLabels error:", e);
+    }
+  }
+
   // INIT MAP
   useEffect(() => {
     let canceled = false;
@@ -252,60 +412,157 @@ const MapEmbedded = ({
         mapRef.current = map;
         map.addControl(new maplibregl.NavigationControl(), "top-right");
 
+        // expose click handler for DOM-marker fallback
+        map.__onClickVillage = onClickVillage;
+
         // prepare normalized geojson here and pass to addVillageLayers
         const normalized = normalizeVillageGeoJSON(villagesGeoJson);
 
-        map.on("load", () => {
-          // debug: đảm bảo style đã load
-          console.debug(
-            "map load — adding village layers. normalized.features:",
-            (normalized && normalized.features && normalized.features.length) ||
-              0
-          );
+        map.on("load", async () => {
+          try {
+            if (canceled) return;
 
-          // pass normalized geojson explicitly
-          addVillageLayers(map, normalized, top3Image);
+            // ensure images exist (we still add top3-marker for convenience)
+            await ensureImages(map);
 
-          // add clickable handlers
-          const clickableLayers = ["village-symbol", "village-name"];
-          clickableLayers.forEach((layerId) => {
-            map.on("mouseenter", layerId, () => {
+            // call addVillageLayers but don't await to avoid throwing errors up
+            addVillageLayers(map, normalized, top3Image)
+              .then(() => {
+                try {
+                  // attach clickable handlers (only if layers exist)
+                  const clickableLayers = ["village-symbol", "village-name"];
+                  clickableLayers.forEach((layerId) => {
+                    try {
+                      if (map.getLayer && map.getLayer(layerId)) {
+                        map.on("mouseenter", layerId, () => {
+                          try {
+                            map.getCanvas().style.cursor = "pointer";
+                          } catch {}
+                        });
+                        map.on("mouseleave", layerId, () => {
+                          try {
+                            map.getCanvas().style.cursor = "";
+                          } catch {}
+                        });
+                        map.on("click", layerId, onClickVillage);
+                      }
+                    } catch (e) {
+                      // skip layer if not present
+                    }
+                  });
+
+                  // Move village layers to below labels
+                  moveVillageLayersBelowLabels(map);
+
+                  // apply states/district layers if toggled
+                  if (showStates) addStatesLayer(map, thailandStatesGeoJson);
+                  if (showDistricts)
+                    addDistrictsLayer(map, thailandDistrictsGeoJson);
+                } catch (e) {
+                  if (DEBUG)
+                    console.warn(
+                      "post addVillageLayers then() handler failed:",
+                      e
+                    );
+                }
+              })
+              .catch((err) => {
+                console.warn("addVillageLayers (load) threw:", err);
+                // even if adding villageLayers fails, still try to add states/districts
+                if (showStates) addStatesLayer(map, thailandStatesGeoJson);
+                if (showDistricts)
+                  addDistrictsLayer(map, thailandDistrictsGeoJson);
+              });
+
+            // debug: print source after a tick
+            setTimeout(() => {
               try {
-                map.getCanvas().style.cursor = "pointer";
-              } catch {}
-            });
-            map.on("mouseleave", layerId, () => {
-              try {
-                map.getCanvas().style.cursor = "";
-              } catch {}
-            });
-            map.on("click", layerId, onClickVillage);
-          });
-
-          // debug: print source after a tick
-          setTimeout(() => {
-            try {
-              const src = map.getSource && map.getSource("villages");
-              console.debug(
-                "villages source after add:",
-                !!src,
-                src &&
-                  src._data &&
-                  src._data.features &&
-                  src._data.features.length
-              );
-            } catch (e) {
-              console.warn(e);
-            }
-          }, 50);
+                const src = map.getSource && map.getSource("villages");
+                console.debug(
+                  "villages source after add:",
+                  !!src,
+                  src &&
+                    src._data &&
+                    src._data.features &&
+                    src._data.features.length
+                );
+                if (DEBUG) {
+                  console.debug(
+                    "hasImage top3-marker:",
+                    map.hasImage && map.hasImage("top3-marker")
+                  );
+                }
+              } catch (e) {
+                console.warn(e);
+              }
+            }, 50);
+          } catch (e) {
+            console.error("map load handler error:", e);
+          }
         });
 
-        map.on("styledata", () => {
-          // re-apply village layers using the same normalized data
-          addVillageLayers(map, normalized, top3Image);
+        map.on("styledata", async () => {
+          try {
+            // only proceed if style fully loaded
+            if (
+              typeof map.isStyleLoaded === "function" &&
+              !map.isStyleLoaded()
+            ) {
+              if (DEBUG)
+                console.debug(
+                  "styledata fired but style not loaded yet - skipping"
+                );
+              return;
+            }
 
-          if (showStates) addStatesLayer(map, thailandStatesGeoJson);
-          if (showDistricts) addDistrictsLayer(map, thailandDistrictsGeoJson);
+            // Re-add images (images are lost after setStyle)
+            await ensureImages(map);
+
+            // Re-add village layers & boundaries because setStyle resets sources/layers
+            const normalizedAgain = normalizeVillageGeoJSON(villagesGeoJson);
+            addVillageLayers(map, normalizedAgain, top3Image)
+              .then(() => {
+                // reattach click handlers (they may be removed when style resets)
+                const clickableLayers = ["village-symbol", "village-name"];
+                clickableLayers.forEach((layerId) => {
+                  try {
+                    // remove old listeners safely
+                    map.off("mouseenter", layerId);
+                    map.off("mouseleave", layerId);
+                    map.off("click", layerId);
+                  } catch {}
+                  try {
+                    if (map.getLayer && map.getLayer(layerId)) {
+                      map.on("mouseenter", layerId, () => {
+                        try {
+                          map.getCanvas().style.cursor = "pointer";
+                        } catch {}
+                      });
+                      map.on("mouseleave", layerId, () => {
+                        try {
+                          map.getCanvas().style.cursor = "";
+                        } catch {}
+                      });
+                      map.on("click", layerId, onClickVillage);
+                    }
+                  } catch (e) {
+                    // ignore
+                  }
+                });
+
+                if (showStates) addStatesLayer(map, thailandStatesGeoJson);
+                if (showDistricts)
+                  addDistrictsLayer(map, thailandDistrictsGeoJson);
+
+                // ensure village layers are placed below label symbols
+                moveVillageLayersBelowLabels(map);
+              })
+              .catch((err) => {
+                console.warn("addVillageLayers (styledata) failed:", err);
+              });
+          } catch (e) {
+            console.warn("styledata handler error:", e);
+          }
         });
       } catch (err) {
         console.error("Failed initializing map:", err);
@@ -327,7 +584,11 @@ const MapEmbedded = ({
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    map.setStyle(mapStyles[style]);
+    try {
+      map.setStyle(mapStyles[style]);
+    } catch (e) {
+      console.warn("setStyle failed:", e);
+    }
   }, [style]);
 
   const handleResetView = useCallback(() => {
@@ -358,7 +619,6 @@ const MapEmbedded = ({
     });
   }, [clearSearchLayerWrapper, setSearchText]);
 
-  // --- NEW: report button handler ---
   const handleOpenReport = useCallback(() => {
     if (typeof onNavigateToReport === "function") {
       try {
@@ -368,7 +628,6 @@ const MapEmbedded = ({
         console.warn("onNavigateToReport threw:", e);
       }
     }
-    // fallback to direct navigation
     window.location.href = reportPath;
   }, [onNavigateToReport, reportPath]);
 
