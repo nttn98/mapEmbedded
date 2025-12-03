@@ -64,7 +64,6 @@ const SummaryCard = ({ data = null, year = 2025, width = 360 }) => {
   return (
     <div
       style={{
-        width,
         background: "#fff",
         borderRadius: 10,
         padding: 12,
